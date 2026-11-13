@@ -283,7 +283,8 @@ footer{color:var(--muted);font-size:12px;margin-top:24px}
   <span class="badge">Meses completos · no responde a las fechas</span>
   <div class="cw"><canvas id="c4"></canvas></div>
   <details><summary>Cómo leerla</summary>
-    <ul><li>Columnas = inversión del mes (eje izquierdo). Línea naranja = conversaciones (eje derecho). El tooltip agrega el costo por conversación.</li>
+    <ul><li>Columnas = inversión del mes (eje izquierdo). La etiqueta en la base de cada columna muestra el total invertido ese mes; en pantallas pequeñas se abrevia (M = millones).</li>
+    <li>Línea naranja = conversaciones (eje derecho). Debajo del nombre de cada mes aparece su costo por conversación (CPR).</li>
     <li>Agosto solo tuvo pauta del 22 al 31 y noviembre tiene datos hasta el 12; por eso sus columnas son más bajas.</li></ul>
   </details>
 </div>
@@ -371,11 +372,40 @@ const valueLabels = {
   afterDatasetsDraw(chart){ const {ctx}=chart;
     chart.data.datasets.forEach((ds,i)=>{ if(!ds.valueLabel) return; const meta=chart.getDatasetMeta(i); if(meta.hidden) return;
       ctx.save(); ctx.font=(chart.width<560?'10px':'11.5px')+' system-ui,sans-serif'; ctx.fillStyle=ds.labelColor||css('--text'); ctx.textAlign='center'; ctx.textBaseline='bottom';
-      meta.data.forEach((el,j)=>{ const t=ds.valueLabel(ds.data[j],j); if(t!=null) ctx.fillText(t, el.x, el.y-(ds.type==='line'?8:3)); });
+      meta.data.forEach((el,j)=>{ const t=ds.valueLabel(ds.data[j],j); if(t==null) return;
+        if(ds.type!=='line'){ ctx.fillText(t, el.x, el.y-3); return; }
+        // Line labels sit on a dark pill so they stay readable over the cyan columns
+        const fs=chart.width<560?10.5:12; ctx.font=`700 ${fs}px system-ui,-apple-system,"Segoe UI",sans-serif`;
+        const c=ds.labelColor||ds.borderColor, tw=ctx.measureText(t).width+12, h=fs+8;
+        const x=Math.max(chart.chartArea.left-20, Math.min(el.x-tw/2, chart.chartArea.right+20-tw)), y=el.y-h-7;
+        ctx.fillStyle='rgba(3,12,30,.95)'; ctx.beginPath(); ctx.roundRect(x,y,tw,h,h/2); ctx.fill();
+        ctx.lineWidth=1.3; ctx.strokeStyle=c; ctx.stroke();
+        ctx.fillStyle=c; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(t, x+tw/2, y+h/2+.5);
+        ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.font=(chart.width<560?'10px':'11.5px')+' system-ui,sans-serif'; ctx.fillStyle=ds.labelColor||css('--text');
+      });
       ctx.restore(); });
   }
 };
-Chart.register(neonGlow, valueLabels);
+// Pill with the bar's total drawn at the base of each column (full amount, or short form when the column is narrow)
+const shortCOP = v => v>=1e6 ? '$'+(v/1e6).toFixed(2).replace('.',',')+' M' : '$'+nf.format(Math.round(v/1000))+' mil';
+const baseLabels = {
+  id:'baseLabels',
+  afterDatasetsDraw(chart){ const ctx=chart.ctx, g=css('--gasto');
+    chart.data.datasets.forEach((ds,i)=>{ if(!ds.baseLabel) return; const meta=chart.getDatasetMeta(i); if(meta.hidden) return;
+      const fs = chart.width<560 ? 10.5 : 12.5; ctx.save(); ctx.font=`700 ${fs}px system-ui,-apple-system,"Segoe UI",sans-serif`;
+      meta.data.forEach((el,j)=>{ const v=ds.data[j]; if(!v) return;
+        const bw = el.width || 40; let t = ds.baseLabel(v,false); if(ctx.measureText(t).width+14 > bw) t = ds.baseLabel(v,true);
+        const tw = Math.min(ctx.measureText(t).width+14, bw+18), h = fs+10, x = el.x-tw/2, y = el.base-h-7;
+        ctx.globalAlpha = ds.baseAlpha ? ds.baseAlpha[j] : 1;
+        ctx.shadowColor=g; ctx.shadowBlur=12; ctx.fillStyle='rgba(3,12,30,.94)';
+        ctx.beginPath(); ctx.roundRect(x,y,tw,h,h/2); ctx.fill();
+        ctx.shadowBlur=0; ctx.lineWidth=1.4; ctx.strokeStyle=g; ctx.stroke();
+        ctx.fillStyle='#ffffff'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(t, el.x, y+h/2+.5);
+      });
+      ctx.restore(); });
+  }
+};
+Chart.register(neonGlow, valueLabels, baseLabels);
 
 // ---------- HTML tooltip (outside canvas; 56 px above the finger, held 3 s) ----------
 const tipEl=document.getElementById('chartTip'); let tipTouch=false, tipHolding=false, tipTimer=null;
@@ -504,7 +534,8 @@ function chart1(S){
     return r.sp ? [`Inversión: ${cop(r.sp)}`,`Conversaciones: ${int(r.conv)}`,`Costo por conversación: ${r.conv?cop(r.sp/r.conv):'n/d'}`] : ['Sin pauta activa'];}}};
   o.scales={x:{ticks:xTicks(),grid:{display:false},title:axT(xTitle())},
     y:{beginAtZero:true,position:'left',ticks:{color:g,callback:v=>copM(v)},title:axT('Inversión (COP)',g)},
-    y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},ticks:{color:c,precision:0,callback:v=>int(v)},title:axT('Conversaciones',c)}};
+    y1:{beginAtZero:true,grace:'20%',position:'right',grid:{drawOnChartArea:false},ticks:{color:c,precision:0,callback:v=>int(v)},title:axT('Conversaciones',c)}};
+  o.scales.y.grace='8%';
   const showLbl = S.length<=16;
   mk('c1',{data:{labels:S.map(r=>r.lab),datasets:[
     {type:'line',label:'Conversaciones iniciadas',data:S.map(r=>r.conv),borderColor:c,backgroundColor:c,yAxisID:'y1',tension:.3,pointRadius:S.length>60?2:3.5,borderWidth:2.5,labelColor:c,valueLabel:showLbl?(v=>v?int(v):null):null},
@@ -516,7 +547,7 @@ function chart2(S){
   o.plugins.tooltip={callbacks:{title:i=>S[i[0].dataIndex].title,label:()=>null,afterBody:i=>{const r=S[i[0].dataIndex], v=vals[i[0].dataIndex];
     return [`Costo por conversación: ${v?cop(v):'n/d'}`,`Inversión: ${cop(r.sp)}`,`Conversaciones: ${int(r.conv)}`, v ? (v<2500?'✔ Bajo la meta de $2.500':'Por encima de la meta') : (r.sp?'Hubo pauta pero ninguna conversación':'Sin pauta activa')];}}};
   o.scales={x:{ticks:xTicks(),grid:{display:false},title:axT(xTitle())},
-    y:{beginAtZero:true,max:Math.min(CAP,Math.max(5000,...vals.filter(ok))*1.08),ticks:{color:rc,callback:v=>copS(v)},title:axT('Costo por conversación (COP)',rc)}};
+    y:{beginAtZero:true,max:Math.max(0,...vals.filter(ok))>CAP?CAP:undefined,grace:'8%',ticks:{color:rc,callback:v=>copS(v)},title:axT('Costo por conversación (COP)',rc)}};
   mk('c2',{data:{labels:S.map(r=>r.lab),datasets:[
     {type:'line',label:'Costo por conversación',data:vals.map(v=>v==null?null:Math.min(v,CAP)),borderColor:rc,backgroundColor:rc,tension:.25,spanGaps:false,borderWidth:2.5,
       pointRadius:S.length>60?2:3.5,pointBackgroundColor:vals.map(v=>v!=null&&v<2500?okc:rc),pointBorderColor:vals.map(v=>v!=null&&v<2500?okc:rc)},
@@ -541,11 +572,14 @@ function chart4(){
   o.plugins.tooltip={callbacks:{title:i=>M[i[0].dataIndex].lab+' 2026',label:()=>null,afterBody:i=>{const r=M[i[0].dataIndex];
     return [`Inversión: ${cop(r.sp)}`,`Conversaciones: ${int(r.conv)}`,`Costo por conversación: ${cop(r.cpr)}`,`Alcance: ${int(r.reach)} personas`];}}};
   o.scales={x:{grid:{display:false},title:axT('Mes')},
-    y:{beginAtZero:true,ticks:{color:g,callback:v=>copM(v)},title:axT('Inversión (COP)',g)},
-    y1:{beginAtZero:true,position:'right',grid:{drawOnChartArea:false},ticks:{color:c,callback:v=>int(v)},title:axT('Conversaciones',c)}};
-  mk('c4',{data:{labels:M.map(r=>r.lab),datasets:[
+    y:{beginAtZero:true,grace:'12%',ticks:{color:g,callback:v=>copM(v)},title:axT('Inversión (COP)',g)},
+    // The conversations axis starts below zero so low months float above the investment pill at the column base
+    y1:{min:-Math.round(Math.max(...M.map(r=>r.conv))*0.4),grace:'45%',position:'right',grid:{drawOnChartArea:false},ticks:{color:c,callback:v=>v<0?'':int(v)},title:axT('Conversaciones',c)}};
+  o.scales.x.ticks={color:'#cfeaff',font:{size:isPhone()?10.5:12.5}};
+  mk('c4',{data:{labels:M.map(r=>[r.lab,'CPR '+copS(r.cpr)]),datasets:[
     {type:'line',label:'Conversaciones',data:M.map(r=>r.conv),borderColor:c,backgroundColor:c,yAxisID:'y1',tension:.25,pointRadius:5,borderWidth:2.5,labelColor:c,valueLabel:v=>int(v)},
-    {type:'bar',label:'Inversión',data:M.map(r=>r.sp),backgroundColor:M.map(r=>per==='ALL'||r.k===per?g:dim),borderRadius:6,yAxisID:'y',maxBarThickness:90,valueLabel:(v,j)=>'CPR '+copS(M[j].cpr),labelColor:'#cfeaff'}]},options:o});
+    {type:'bar',label:'Inversión',data:M.map(r=>r.sp),backgroundColor:M.map(r=>per==='ALL'||r.k===per?g:dim),borderRadius:6,yAxisID:'y',maxBarThickness:96,
+      baseLabel:(v,short)=>short?shortCOP(v):copS(v), baseAlpha:M.map(r=>per==='ALL'||r.k===per?1:.6)}]},options:o});
   // Table
   const T=metrics('ALL',P.ALL.min,P.ALL.max);
   const row=(r,name,cls)=>`<tr class="${cls||''}"><td>${name}</td><td class="num" data-l="Inversión">${cop(r.sp)}</td><td class="num" data-l="Conversaciones">${int(r.conv)}</td><td class="num" data-l="Costo por conversación">${cop(r.cpr)}</td><td class="num" data-l="Alcance">${r.reachExact?'':'≈'}${int(r.reach)}</td><td class="num" data-l="Impresiones">${int(r.imp)}</td><td class="num" data-l="Frecuencia">${r.freq?dec(r.freq):'n/d'}</td><td class="num" data-l="CPM">${cop(r.cpm)}</td><td class="num" data-l="CTR">${pct(r.ctr,2)}</td><td class="num" data-l="Seguidores IG">${int(r.fol)}</td><td class="num" data-l="Días con pauta">${r.days}</td></tr>`;
